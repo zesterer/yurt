@@ -52,7 +52,22 @@ impl Tape {
         //     }
         // }
 
-        assert_eq!(core::mem::size_of::<F>(), 0, "Operation functions are not permitted to have captures");
+        /// ```compile_fail
+        /// use yurt::vm::Tape;
+        /// let mut tape = Tape::default();
+        /// let i = 0;
+        /// tape.push_op((), |(), _, _, _| {
+        ///     let _ = &i;
+        /// });
+        /// ```
+        trait NoCapture: Sized {
+            const ASSERT: () = assert!(core::mem::size_of::<Self>() == 0, "Can only perform operations that have no environment");
+        }
+
+        impl<F> NoCapture for F {}
+
+        #[allow(clippy::let_unit_value)]
+        let _ = <F as NoCapture>::ASSERT;
 
         self.push(perform::<A, F> as TapeFn);
         args.push(self);
