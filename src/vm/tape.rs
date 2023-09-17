@@ -50,6 +50,14 @@ impl Tape {
         //     }
         // }
 
+        /// ```compile_fail
+        /// use yurt::vm::Tape;
+        /// let mut tape = Tape::default();
+        /// let i = 0;
+        /// tape.push_op((), |(), _, _, _| {
+        ///     let _ = &i;
+        /// });
+        /// ```
         trait NoCapture: Sized {
             const ASSERT: () = assert!(core::mem::size_of::<Self>() == 0, "Can only perform operations that have no environment");
         }
