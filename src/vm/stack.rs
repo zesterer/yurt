@@ -24,7 +24,7 @@ pub struct StackPtr<'stack>(Range<*mut MaybeUninit<u8>>, PhantomData<&'stack mut
 
 impl<'stack> StackPtr<'stack> {
     #[inline(always)]
-    pub fn push<T: TapeData, const CHECK_FOR_OVERFLOW: bool>(&mut self, x: T)
+    pub fn push<T: Data, const CHECK_FOR_OVERFLOW: bool>(&mut self, x: T)
         where [(); T::BYTES]:
     {
         let bytes = x.to_bytes();
@@ -42,13 +42,13 @@ impl<'stack> StackPtr<'stack> {
         &*(self.0.end.offset(offset as isize) as *const [MaybeUninit<u8>; N])
     }
     #[inline(always)]
-    pub unsafe fn read_at<T: TapeData>(&self, offset: usize) -> T
+    pub unsafe fn read_at<T: Data>(&self, offset: usize) -> T
         where [(); T::BYTES]:
     {
         T::from_bytes(*self.read_bytes_at(offset))
     }
     #[inline(always)]
-    pub unsafe fn pop<T: TapeData>(&mut self) -> T
+    pub unsafe fn pop<T: Data>(&mut self) -> T
         where [(); T::BYTES]:
     {
         let x = self.read_at(0);

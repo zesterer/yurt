@@ -13,7 +13,7 @@ pub struct Tape {
 }
 
 impl Tape {
-    pub fn push<T: TapeData>(&mut self, data: T) -> TapeOffset where [(); T::BYTES]: {
+    pub fn push<T: Data>(&mut self, data: T) -> TapeOffset where [(); T::BYTES]: {
         let offset = TapeOffset(self.code.len());
         self.code.extend_from_slice(data.to_bytes().as_ref());
         offset
@@ -77,7 +77,7 @@ macro_rules! impl_args_for_tuple {
     };
     (~ $($X:ident)*) => {
         #[allow(unused_variables, non_snake_case)]
-        impl<$($X: TapeData),*> Args for ($($X,)*) where $([(); $X::BYTES]:,)* {
+        impl<$($X: Data),*> Args for ($($X,)*) where $([(); $X::BYTES]:,)* {
             fn push(self, tape: &mut Tape) {
                 let ($($X,)*) = self;
                 $(tape.push($X);)*
@@ -110,7 +110,7 @@ impl<'tape> TapePtr<'tape> {
 
     /// SAFETY: `TapePtr` must have data exactly corresponding to this type.
     #[inline(always)]
-    pub unsafe fn read<T: TapeData>(&mut self) -> T
+    pub unsafe fn read<T: Data>(&mut self) -> T
         where [(); T::BYTES]:
     { T::from_bytes(*self.read_bytes()) }
 
@@ -118,53 +118,5 @@ impl<'tape> TapePtr<'tape> {
     pub unsafe fn exec_at<'rt, 'stack>(&mut self, offset: isize, state: State<'rt, 'tape, 'stack>, stack: StackPtr<'stack>) {
         let mut tape = Self(self.0.offset(offset), PhantomData);
         tape.read::<TapeFn>()(tape, state, stack);
-    }
-}
-
-pub trait TapeData {
-    const BYTES: usize;
-
-    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES];
-    /// Bytes must be valid for this type.
-    unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self;
-}
-
-macro_rules! tape_data_int {
-    ($($T:ty = $N:expr),* $(,)?) => {
-        $(
-            impl TapeData for $T {
-                const BYTES: usize = $N;
-                #[inline(always)]
-                fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] { MaybeUninit::new(self.to_ne_bytes()).transpose() }
-                #[inline(always)]
-                unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self {
-                    <$T>::from_ne_bytes(MaybeUninit::array_assume_init(bytes))
-                }
-            }
-        )*
-    };
-}
-
-tape_data_int!(
-    u8 = 1, u16 = 2, u32 = 4, u64 = 8, u128 = 16, usize = core::mem::size_of::<usize>(),
-    i8 = 1, i16 = 2, i32 = 4, i64 = 8, i128 = 16, isize = core::mem::size_of::<isize>(),
-);
-
-impl TapeData for () {
-    const BYTES: usize = 0;
-    #[inline(always)]
-    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] { [] }
-    #[inline(always)]
-    unsafe fn from_bytes(_bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self {}
-}
-
-impl TapeData for TapeFn {
-    const BYTES: usize = core::mem::size_of::<TapeFn>();
-
-    #[inline(always)]
-    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] { MaybeUninit::new((*self as usize).to_ne_bytes()).transpose() }
-    #[inline(always)]
-    unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self {
-        core::mem::transmute(bytes)
     }
 }

@@ -2,10 +2,12 @@ use super::*;
 
 pub mod tape;
 pub mod stack;
+pub mod util;
 
 pub use self::{
-    tape::{Tape, TapePtr, TapeFn, TapeData},
+    tape::{Tape, TapePtr, TapeFn},
     stack::{Stack, StackPtr},
+    util::Data,
 };
 
 #[derive(Copy, Clone, Default)]
