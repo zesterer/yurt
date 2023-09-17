@@ -24,7 +24,7 @@ pub struct StackPtr<'stack>(Range<*mut MaybeUninit<u8>>, PhantomData<&'stack mut
 
 impl<'stack> StackPtr<'stack> {
     #[inline(always)]
-    pub fn push<T: Data, const CHECK_FOR_OVERFLOW: bool>(&mut self, x: T)
+    pub unsafe fn push<T: Data, const CHECK_FOR_OVERFLOW: bool>(&mut self, x: T)
         where [(); T::BYTES]:
     {
         let bytes = x.to_bytes();
@@ -54,5 +54,15 @@ impl<'stack> StackPtr<'stack> {
         let x = self.read_at(0);
         self.0.end = self.0.end.offset(T::BYTES as isize);
         x
+    }
+    #[inline(always)]
+    pub unsafe fn copy_to_top(&mut self, offset: usize, len: usize) {
+        let src = self.0.end.offset(offset as isize);
+        self.0.end = self.0.end.offset(-(len as isize));
+        core::ptr::copy_nonoverlapping(src, self.0.end, len);
+    }
+    #[inline(always)]
+    pub unsafe fn pop_n(&mut self, n: usize) {
+        self.0.end = self.0.end.offset(n as isize);
     }
 }

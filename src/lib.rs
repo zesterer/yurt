@@ -9,6 +9,7 @@
 
 pub mod vm;
 pub mod compiler;
+pub mod api;
 
 use core::{
     marker::PhantomData,

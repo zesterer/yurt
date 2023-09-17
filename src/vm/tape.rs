@@ -13,6 +13,8 @@ pub struct Tape {
 }
 
 impl Tape {
+    pub fn next_addr(&self) -> usize { self.code.len() }
+
     pub fn push<T: Data>(&mut self, data: T) -> TapeOffset where [(); T::BYTES]: {
         let offset = TapeOffset(self.code.len());
         self.code.extend_from_slice(data.to_bytes().as_ref());
