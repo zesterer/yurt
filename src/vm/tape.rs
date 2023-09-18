@@ -62,7 +62,8 @@ impl Tape {
 
             f(args, &mut tape, &mut state, &mut stack);
 
-            become unsafe { tape.read::<TapeFn>()(tape, state, stack) }
+            let next_instr = unsafe { tape.read::<TapeFn>() };
+            become unsafe { next_instr(tape, state, stack) }
         }
 
         // Doesn't work yet :(

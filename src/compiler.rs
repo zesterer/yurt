@@ -116,9 +116,12 @@ impl Expr {
                 dst.offset + dst.repr.resolve_path_offset(&dst_path),
                 src_repr.size(),
             ) {
-                // (0, 8) => tape.push_op((), #[inline(always)] |(), tape, regs, stack| unsafe { stack.copy_to_top(0, 8) }),
-                // (offset, 8) => tape.push_op((offset,), #[inline(always)] |(offset,), tape, regs, stack| unsafe { stack.copy_to_top(offset, 8) }),
-                // (offset, 16) => tape.push_op((offset,), #[inline(always)] |(offset,), tape, regs, stack| unsafe { stack.copy_to_top(offset, 16) }),
+                (src, dst, len @ 8) => tape.push_op(
+                    format!("copy {src:3} -[x{len:2}]-> {dst:3}"),
+                    (src, dst),
+                    #[inline(always)]
+                    |(src, dst), tape, regs, stack| unsafe { stack.copy(src, dst, 8) },
+                ),
                 (src, dst, len) => tape.push_op(
                     format!("copy {src:3} -[x{len:2}]-> {dst:3}"),
                     (src, dst, len),
@@ -161,6 +164,19 @@ impl Expr {
                 src1.offset + src1.repr.resolve_path_offset(&src1_path),
                 dst.offset + dst.repr.resolve_path_offset(&dst_path),
             ) {
+                (src0 @ 8, src1 @ 16, dst @ 32) => tape.push_op(
+                    format!(
+                        "binary {src0:3}, {src1:3} -> {dst:3} ({})",
+                        core::any::type_name::<F>()
+                    ),
+                    (),
+                    #[inline(always)]
+                    move |(), tape, regs, stack| unsafe {
+                        let a = stack.read(8);
+                        let b = stack.read(16);
+                        stack.write(f(a, b), 32);
+                    },
+                ),
                 (src0, src1, dst) => tape.push_op(
                     format!(
                         "binary {src0:3}, {src1:3} -> {dst:3} ({})",

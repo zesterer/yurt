@@ -1,6 +1,6 @@
 use yurt::{
-    vm::{Tape, Stack, State, Runtime},
     api::{Module, Repr},
+    vm::{Runtime, Stack, State, Tape},
 };
 
 #[test]
@@ -10,12 +10,18 @@ fn procedure() {
         Repr::Tuple(vec![Repr::U64, Repr::U64, Repr::U64]),
         Repr::U64,
         |arg| {
-            arg.clone().field(0)
-                .mul(arg.clone().field(1))
+            arg.clone()
+                .field(0)
+                .add(arg.clone().field(1))
                 .add(arg.field(2))
         },
     );
     let module = module.compile().unwrap();
 
-    assert_eq!(module.call::<_, u64>(add_mul, (3u64, 5u64, 4u64)).unwrap(), 8);
+    module.show_symbols();
+
+    assert_eq!(
+        module.call::<_, u64>(add_mul, (3u64, 5u64, 1u64)).unwrap(),
+        9
+    );
 }
