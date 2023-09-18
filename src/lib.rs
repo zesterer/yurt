@@ -4,17 +4,16 @@
     maybe_uninit_array_assume_init,
     generic_const_exprs,
     inline_const,
+    core_intrinsics,
+    int_roundings
 )]
 #![allow(incomplete_features, unused_mut, unused_variables)]
 
-pub mod vm;
-pub mod compiler;
 pub mod api;
+pub mod compiler;
+pub mod vm;
 
-use core::{
-    marker::PhantomData,
-    mem::MaybeUninit,
-};
+use core::{marker::PhantomData, mem::MaybeUninit};
 
 // pub unsafe fn cont(mut tape: TapePtr, mut regs: Regs, mut stack: StackPtr) {
 //     become tape.read::<TapeFn>()(tape, regs, stack)

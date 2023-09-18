@@ -1,6 +1,7 @@
 use super::*;
 
-pub type TapeFn = for<'rt, 'tape, 'stack> fn(TapePtr<'tape>, State<'rt, 'tape, 'stack>, StackPtr<'stack>);
+pub type TapeFn =
+    for<'rt, 'tape, 'stack> fn(TapePtr<'tape>, State<'rt, 'tape, 'stack>, StackPtr<'stack>);
 
 #[derive(Copy, Clone)]
 pub struct TapeOffset(usize);
@@ -10,12 +11,18 @@ pub struct Tape {
     // `MaybeUninit` is used because it may carry provenance, which is important for function pointers
     // See [https://github.com/rust-lang/miri/issues/2926]
     code: Vec<MaybeUninit<u8>>,
+    pub(crate) symbols: Vec<(usize, String)>,
 }
 
 impl Tape {
-    pub fn next_addr(&self) -> usize { self.code.len() }
+    pub fn next_addr(&self) -> usize {
+        self.code.len()
+    }
 
-    pub fn push<T: Data>(&mut self, data: T) -> TapeOffset where [(); T::BYTES]: {
+    pub fn push<T: Data>(&mut self, data: T) -> TapeOffset
+    where
+        [(); T::BYTES]:,
+    {
         let offset = TapeOffset(self.code.len());
         self.code.extend_from_slice(data.to_bytes().as_ref());
         offset
@@ -26,15 +33,28 @@ impl Tape {
     }
 
     #[track_caller]
-    pub fn push_op<A, F>(&mut self, args: A, _f: F)
+    pub fn push_op<A, F>(&mut self, symbol: String, args: A, _f: F)
     where
         A: Args,
-        F: for<'rt, 'tape, 'stack> Fn(A, &mut TapePtr<'tape>, &mut State<'rt, 'tape, 'stack>, &mut StackPtr<'stack>) + Copy,
+        F: for<'rt, 'tape, 'stack> Fn(
+                A,
+                &mut TapePtr<'tape>,
+                &mut State<'rt, 'tape, 'stack>,
+                &mut StackPtr<'stack>,
+            ) + Copy,
     {
-        fn perform<'rt, 'tape, 'stack, A, F>(mut tape: TapePtr<'tape>, mut state: State<'rt, 'tape, 'stack>, mut stack: StackPtr<'stack>)
-        where
+        fn perform<'rt, 'tape, 'stack, A, F>(
+            mut tape: TapePtr<'tape>,
+            mut state: State<'rt, 'tape, 'stack>,
+            mut stack: StackPtr<'stack>,
+        ) where
             A: Args,
-            F: for<'rt1, 'tape1, 'stack1> Fn(A, &mut TapePtr<'tape1>, &mut State<'rt1, 'tape1, 'stack1>, &mut StackPtr<'stack1>) + Copy,
+            F: for<'rt1, 'tape1, 'stack1> Fn(
+                    A,
+                    &mut TapePtr<'tape1>,
+                    &mut State<'rt1, 'tape1, 'stack1>,
+                    &mut StackPtr<'stack1>,
+                ) + Copy,
         {
             let f = unsafe { core::mem::transmute::<_, &F>(&()) };
 
@@ -61,7 +81,10 @@ impl Tape {
         /// });
         /// ```
         trait NoCapture: Sized {
-            const ASSERT: () = assert!(core::mem::size_of::<Self>() == 0, "Can only perform operations that have no environment");
+            const ASSERT: () = assert!(
+                core::mem::size_of::<Self>() == 0,
+                "Can only perform operations that have no environment"
+            );
         }
 
         impl<F> NoCapture for F {}
@@ -69,14 +92,17 @@ impl Tape {
         #[allow(clippy::let_unit_value)]
         let _ = <F as NoCapture>::ASSERT;
 
+        self.symbols.push((self.code.len(), symbol));
         self.push(perform::<A, F> as TapeFn);
         args.push(self);
     }
 
     pub fn push_exit(&mut self) {
-        self.push((|tape, state, stack| {
-            state.rt.save_state(tape, state.regs, stack);
-        }) as TapeFn);
+        self.push(
+            (|tape, state, stack| {
+                state.rt.save_state(tape, state.regs, stack);
+            }) as TapeFn,
+        );
     }
 }
 
@@ -128,11 +154,19 @@ impl<'tape> TapePtr<'tape> {
     /// SAFETY: `TapePtr` must have data exactly corresponding to this type.
     #[inline(always)]
     pub unsafe fn read<T: Data>(&mut self) -> T
-        where [(); T::BYTES]:
-    { T::from_bytes(*self.read_bytes()) }
+    where
+        [(); T::BYTES]:,
+    {
+        T::from_bytes(*self.read_bytes())
+    }
 
     #[inline(always)]
-    pub unsafe fn exec_at<'rt, 'stack>(&mut self, offset: isize, state: State<'rt, 'tape, 'stack>, stack: StackPtr<'stack>) {
+    pub unsafe fn exec_at<'rt, 'stack>(
+        &mut self,
+        offset: isize,
+        state: State<'rt, 'tape, 'stack>,
+        stack: StackPtr<'stack>,
+    ) {
         let mut tape = Self(self.0.offset(offset), PhantomData);
         tape.read::<TapeFn>()(tape, state, stack);
     }

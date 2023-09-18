@@ -1,13 +1,13 @@
 use super::*;
 
-pub mod tape;
 pub mod stack;
+pub mod tape;
 pub mod util;
 
 pub use self::{
-    tape::{Tape, TapePtr, TapeFn},
     stack::{Stack, StackPtr},
-    util::Data,
+    tape::{Tape, TapeFn, TapePtr},
+    util::{Data, ReadWrite},
 };
 
 #[derive(Copy, Clone, Default)]
