@@ -60,10 +60,12 @@ impl Tape {
 
             let args = unsafe { A::from_tape(&mut tape) };
 
+            // TODO: Experiment with putting the next instruction fetching above and below the instruction logic
+            let next_instr = unsafe { tape.read::<TapeFn>() };
+
             f(args, &mut tape, &mut state, &mut stack);
 
-            let next_instr = unsafe { tape.read::<TapeFn>() };
-            become unsafe { next_instr(tape, state, stack) }
+            become next_instr(tape, state, stack);
         }
 
         // Doesn't work yet :(

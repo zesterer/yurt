@@ -75,6 +75,27 @@ impl StackLog {
     pub fn get(&self, idx: StackIdx) -> &StackItem {
         &self.items[idx.0]
     }
+
+    // Like `with_push`, except the expression is permitted to be derived from some local instead
+    pub fn with_expr<F, R>(&mut self, tape: &mut Tape, expr: Expr, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&mut Tape, &mut Self, (StackIdx, Path)) -> R,
+    {
+        // Try to extract the expression as a path
+        if let Some(path) = expr.try_as_path(self) {
+            Ok(f(tape, self, path))
+        } else {
+            // Path extraction failed, evaluate the expression into a temporary
+            self.with_push(
+                StackItemKind::Temporary,
+                expr.derive_repr(self),
+                |stack, expr_out| {
+                    expr.compile(tape, stack, expr_out)?;
+                    Ok(f(tape, stack, (expr_out, Path::All)))
+                },
+            )
+        }
+    }
 }
 
 // Represents a path into a repr
@@ -111,22 +132,24 @@ impl Expr {
 
             // println!("src = {:?} [{}], dst = {:?} [{}]", src.repr.resolve_path(&src_path), src.offset + src.repr.resolve_path_offset(&src_path), dst.repr.resolve_path(&dst_path), dst.offset + dst.repr.resolve_path_offset(&dst_path));
 
-            match (
+            let (src, dst, sz) = (
                 src.offset + src.repr.resolve_path_offset(&src_path),
                 dst.offset + dst.repr.resolve_path_offset(&dst_path),
                 src_repr.size(),
-            ) {
-                (src, dst, len @ 8) => tape.push_op(
-                    format!("copy {src:3} -[x{len:2}]-> {dst:3}"),
-                    (src, dst),
-                    #[inline(always)]
-                    |(src, dst), tape, regs, stack| unsafe { stack.copy(src, dst, 8) },
-                ),
-                (src, dst, len) => tape.push_op(
-                    format!("copy {src:3} -[x{len:2}]-> {dst:3}"),
-                    (src, dst, len),
-                    #[inline(always)]
-                    |(src, dst, len), tape, regs, stack| unsafe { stack.copy(src, dst, len) },
+            );
+
+            let symbol = format!("copy {src:3} -[x{sz:2}]-> {dst:3}");
+
+            match (src, dst, sz) {
+                (src, dst, sz @ 8) => {
+                    tape.push_op(symbol, (src, dst), |(src, dst), tape, regs, stack| unsafe {
+                        stack.copy(src, dst, 8)
+                    })
+                }
+                (src, dst, sz) => tape.push_op(
+                    symbol,
+                    (src, dst, sz),
+                    |(src, dst, sz), tape, regs, stack| unsafe { stack.copy(src, dst, sz) },
                 ),
             }
         }
@@ -159,31 +182,28 @@ impl Expr {
                 "Source/destination reprs do not match for binary op"
             );
 
-            match (
+            let (src0, src1, dst) = (
                 src0.offset + src0.repr.resolve_path_offset(&src0_path),
                 src1.offset + src1.repr.resolve_path_offset(&src1_path),
                 dst.offset + dst.repr.resolve_path_offset(&dst_path),
-            ) {
-                (src0 @ 8, src1 @ 16, dst @ 32) => tape.push_op(
-                    format!(
-                        "binary {src0:3}, {src1:3} -> {dst:3} ({})",
-                        core::any::type_name::<F>()
-                    ),
-                    (),
-                    #[inline(always)]
-                    move |(), tape, regs, stack| unsafe {
+            );
+
+            let symbol = format!(
+                "binary {src0:3}, {src1:3} -> {dst:3} ({})",
+                core::any::type_name::<F>()
+            );
+
+            match (src0, src1, dst) {
+                (src0 @ 8, src1 @ 16, dst @ 32) => {
+                    tape.push_op(symbol, (), move |(), tape, regs, stack| unsafe {
                         let a = stack.read(8);
                         let b = stack.read(16);
                         stack.write(f(a, b), 32);
-                    },
-                ),
+                    })
+                }
                 (src0, src1, dst) => tape.push_op(
-                    format!(
-                        "binary {src0:3}, {src1:3} -> {dst:3} ({})",
-                        core::any::type_name::<F>()
-                    ),
+                    symbol,
                     (src0, src1, dst),
-                    #[inline(always)]
                     move |(src0, src1, dst), tape, regs, stack| unsafe {
                         let a = stack.read(src0);
                         let b = stack.read(src1);
@@ -207,69 +227,22 @@ impl Expr {
                 (stack.get_local(local), Path::All),
                 (output, Path::All),
             ),
-            Expr::Add(a, b) => {
-                if let (Some(a), Some(b)) = (a.try_as_path(stack), b.try_as_path(stack)) {
+            Expr::Add(a, b) => stack.with_expr(tape, *a, move |tape, stack, a_slot| {
+                stack.with_expr(tape, *b, move |tape, stack, b_slot| {
                     binary_op(
                         tape,
                         stack,
                         <u64 as core::ops::Add<u64>>::add,
-                        a,
-                        b,
+                        a_slot,
+                        b_slot,
                         (output, Path::All),
                     );
-                } else {
-                    stack.with_push(
-                        StackItemKind::Temporary,
-                        a.derive_repr(stack),
-                        |stack, a_out| {
-                            a.compile(tape, stack, a_out)?;
-
-                            stack.with_push(
-                                StackItemKind::Temporary,
-                                b.derive_repr(stack),
-                                |stack, b_out| {
-                                    b.compile(tape, stack, b_out)?;
-
-                                    binary_op(
-                                        tape,
-                                        stack,
-                                        <u64 as core::ops::Add<u64>>::add,
-                                        (a_out, Path::All),
-                                        (b_out, Path::All),
-                                        (output, Path::All),
-                                    );
-
-                                    Ok::<(), String>(())
-                                },
-                            )
-                        },
-                    )?;
-                }
-            }
+                })
+            })??,
             Expr::FieldAccess(x, key) => {
-                if let Some((x, x_path)) = x.try_as_path(stack) {
-                    copy(
-                        tape,
-                        stack,
-                        (x, Path::Field(key, Box::new(x_path))),
-                        (output, Path::All),
-                    );
-                } else {
-                    let tuple_repr = x.derive_repr(stack);
-
-                    stack.with_push(StackItemKind::Temporary, tuple_repr, |stack, tuple_out| {
-                        x.compile(tape, stack, tuple_out)?;
-
-                        copy(
-                            tape,
-                            stack,
-                            (tuple_out, Path::Field(key, Box::new(Path::All))),
-                            (output, Path::All),
-                        );
-
-                        Ok::<(), String>(())
-                    })?;
-                }
+                stack.with_expr(tape, *x, move |tape, stack, x_slot| {
+                    copy(tape, stack, x_slot, (output, Path::All));
+                })?
             }
             expr => todo!("{expr:?}"),
         })
