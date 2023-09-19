@@ -1,0 +1,6 @@
+max_width = 150
+attr_fn_like_width = 140
+combine_control_expr = true
+fn_single_line = true
+match_arm_blocks = false
+match_block_trailing_comma = true

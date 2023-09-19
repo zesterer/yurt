@@ -2,7 +2,7 @@ use super::*;
 
 use crate::vm::{
     util::{incr_offset, AsRepr},
-    Data, ReadWrite, Runtime, Stack, State, Tape,
+    Data, ReadWrite, Runtime, Stack, State, Tape, TapeOffset,
 };
 
 pub struct Module {
@@ -11,15 +11,9 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn build() -> ModuleBuilder {
-        ModuleBuilder::default()
-    }
+    pub fn build() -> ModuleBuilder { ModuleBuilder::default() }
 
-    pub fn call<I: ReadWrite + AsRepr, O: ReadWrite + AsRepr>(
-        &self,
-        f: FuncId,
-        input: I,
-    ) -> Result<O, String> {
+    pub fn call<I: ReadWrite + AsRepr, O: ReadWrite + AsRepr>(&self, f: FuncId, input: I) -> Result<O, String> {
         let func = &self.funcs[f.0];
 
         let input_repr = I::repr();
@@ -46,17 +40,15 @@ impl Module {
                 let input_range = incr_offset(output_range.end, &input_repr);
                 stack.write(input, input_range.start);
 
-                self.tape
-                    .ptr()
-                    .exec_at(func.addr as isize, State::init(&mut rt), stack);
+                self.tape.ptr().exec_at(func.addr, State::init(&mut rt), stack);
                 Ok(rt.last_stack_ptr().unwrap().read(output_range.start))
             }
         }
     }
 
     pub fn show_symbols(&self) {
-        for (addr, desc) in &self.tape.symbols {
-            println!("0x{addr:03X} | {desc}");
+        for (addr, addr_to, desc) in &self.tape.symbols {
+            println!("0x{addr:03X}..0x{addr_to:03X} | {desc}");
         }
     }
 }
@@ -64,7 +56,7 @@ impl Module {
 pub struct FuncInfo {
     pub(crate) input: Repr,
     pub(crate) output: Repr,
-    pub(crate) addr: usize,
+    pub(crate) addr: TapeOffset,
 }
 
 #[derive(Default)]
@@ -73,12 +65,7 @@ pub struct ModuleBuilder {
 }
 
 impl ModuleBuilder {
-    pub fn build_func<F: FnOnce(Expr) -> Expr>(
-        &mut self,
-        input: Repr,
-        output: Repr,
-        f: F,
-    ) -> FuncId {
+    pub fn build_func<F: FnOnce(Expr) -> Expr>(&mut self, input: Repr, output: Repr, f: F) -> FuncId {
         let id = FuncId(self.funcs.len());
         self.funcs.push(Func {
             input,
@@ -100,39 +87,38 @@ pub struct Func {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
+    Bool(bool),
+    U64(u64),
+
     Local(usize),
     FieldAccess(Box<Self>, usize),
     Add(Box<Self>, Box<Self>),
     Mul(Box<Self>, Box<Self>),
     Then(Box<Self>, Box<Self>),
     Scope(Vec<Self>, Box<Self>),
+    IfElse(Box<Self>, Box<Self>, Box<Self>),
 }
 
 impl Expr {
-    pub fn field(self, key: usize) -> Self {
-        Self::FieldAccess(Box::new(self), key)
-    }
+    pub fn field(self, key: usize) -> Self { Self::FieldAccess(Box::new(self), key) }
 
-    pub fn add(self, other: Self) -> Self {
-        Self::Add(Box::new(self), Box::new(other))
-    }
-    pub fn mul(self, other: Self) -> Self {
-        Self::Mul(Box::new(self), Box::new(other))
-    }
+    pub fn add(self, other: Self) -> Self { Self::Add(Box::new(self), Box::new(other)) }
+    pub fn mul(self, other: Self) -> Self { Self::Mul(Box::new(self), Box::new(other)) }
 
-    pub fn then(self, other: Self) -> Self {
-        Self::Then(Box::new(self), Box::new(other))
-    }
+    pub fn then(self, other: Self) -> Self { Self::Then(Box::new(self), Box::new(other)) }
 
     pub fn scope<F: FnOnce(Vec<Expr>) -> Expr>(inputs: Vec<Expr>, f: F) -> Self {
         let body = f((0..inputs.len()).map(Self::Local).collect());
         Self::Scope(inputs, Box::new(body))
     }
+
+    pub fn if_else(self, a: Self, b: Self) -> Self { Self::IfElse(Box::new(self), Box::new(a), Box::new(b)) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Repr {
     U64,
+    Bool,
     Tuple(Vec<Repr>),
 }
 
@@ -140,6 +126,7 @@ impl Repr {
     pub fn size(&self) -> usize {
         match self {
             Self::U64 => u64::BYTES,
+            Self::Bool => bool::BYTES,
             Self::Tuple(fields) => fields.iter().map(|f| f.size()).sum(),
         }
     }
@@ -147,6 +134,7 @@ impl Repr {
     pub fn align(&self) -> usize {
         match self {
             Self::U64 => u64::ALIGN,
+            Self::Bool => bool::ALIGN,
             Self::Tuple(fields) => fields.iter().map(|f| f.align()).max().unwrap_or(1), // Align of an empty tuple is 1
         }
     }

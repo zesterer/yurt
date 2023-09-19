@@ -81,9 +81,11 @@ tape_data_int!(
 );
 
 impl AsRepr for u64 {
-    fn repr() -> Repr {
-        Repr::U64
-    }
+    fn repr() -> Repr { Repr::U64 }
+}
+
+impl AsRepr for bool {
+    fn repr() -> Repr { Repr::Bool }
 }
 
 impl Data for TapeFn {
@@ -91,13 +93,27 @@ impl Data for TapeFn {
     const ALIGN: usize = core::mem::align_of::<TapeFn>();
 
     #[inline(always)]
-    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] {
-        MaybeUninit::new((*self as usize).to_ne_bytes()).transpose()
-    }
+    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] { MaybeUninit::new((*self as usize).to_ne_bytes()).transpose() }
     #[inline(always)]
-    unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self {
-        core::mem::transmute(bytes)
-    }
+    unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self { core::mem::transmute(bytes) }
+}
+
+impl Data for bool {
+    const BYTES: usize = 1;
+    const ALIGN: usize = core::mem::align_of::<u8>();
+    #[inline(always)]
+    fn to_bytes(&self) -> [MaybeUninit<u8>; Self::BYTES] { [MaybeUninit::new(*self as u8)] }
+    #[inline(always)]
+    unsafe fn from_bytes(bytes: [MaybeUninit<u8>; Self::BYTES]) -> Self { MaybeUninit::array_assume_init(bytes)[0] > 0 }
+}
+
+impl StackSafe for bool {}
+
+impl ReadWrite for bool {
+    #[inline(always)]
+    unsafe fn write(&self, stack: &mut StackPtr, offset: usize) { stack.ptr_mut().offset(offset as isize).cast::<u8>().write(*self as u8); }
+    #[inline(always)]
+    unsafe fn read(stack: &StackPtr, offset: usize) -> Self { stack.ptr().offset(offset as isize).cast::<u8>().read() > 0 }
 }
 
 macro_rules! impl_push_pop_for_tuple {

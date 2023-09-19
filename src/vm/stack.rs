@@ -35,38 +35,22 @@ impl<'stack> StackPtr<'stack> {
     pub const FRAME_ALIGN: usize = 16;
 
     #[inline(always)]
-    pub(crate) fn ptr(&self) -> *const MaybeUninit<u8> {
-        self.ptr
-    }
+    pub(crate) fn ptr(&self) -> *const MaybeUninit<u8> { self.ptr }
     #[inline(always)]
-    pub(crate) fn ptr_mut(&mut self) -> *mut MaybeUninit<u8> {
-        self.ptr
-    }
+    pub(crate) fn ptr_mut(&mut self) -> *mut MaybeUninit<u8> { self.ptr }
 
     #[inline(always)]
-    pub unsafe fn enter_stack_frame<const CHECK_OVERFLOW: bool>(
-        &mut self,
-        frame_start: usize,
-        stack_end: *mut MaybeUninit<u8>,
-    ) {
+    pub unsafe fn enter_stack_frame<const CHECK_OVERFLOW: bool>(&mut self, frame_start: usize, stack_end: *mut MaybeUninit<u8>) {
         self.ptr = self.ptr.offset(frame_start as isize);
     }
 
     #[inline(always)]
-    pub unsafe fn read<T: ReadWrite>(&self, offset: usize) -> T {
-        T::read(self, offset)
-    }
+    pub unsafe fn read<T: ReadWrite>(&self, offset: usize) -> T { T::read(self, offset) }
     #[inline(always)]
-    pub unsafe fn write<T: ReadWrite>(&mut self, x: T, offset: usize) {
-        x.write(self, offset)
-    }
+    pub unsafe fn write<T: ReadWrite>(&mut self, x: T, offset: usize) { x.write(self, offset) }
 
     #[inline(always)]
     pub unsafe fn copy(&mut self, src: usize, dst: usize, len: usize) {
-        core::ptr::copy_nonoverlapping(
-            self.ptr.offset(src as isize),
-            self.ptr.offset(dst as isize),
-            len,
-        );
+        core::ptr::copy_nonoverlapping(self.ptr.offset(src as isize), self.ptr.offset(dst as isize), len);
     }
 }
