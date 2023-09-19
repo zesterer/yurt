@@ -1,5 +1,5 @@
 use crate::{
-    api::{Expr, Func, FuncInfo, Module, ModuleBuilder, Repr},
+    api::{Cond, Expr, Func, FuncInfo, Module, ModuleBuilder, Repr},
     vm::{
         util::{incr_offset, AsRepr, ReadWrite},
         Data, FixupTapeOffset, Tape, TapeOffset,
@@ -210,10 +210,19 @@ impl Expr {
         }
 
         #[must_use]
-        fn jump_if(tape: &mut Tape, stack: &mut StackLog, (src, src_path): (StackIdx, Path)) -> FixupTapeOffset<isize> {
+        fn jump_if<F, A: Data + ReadWrite + AsRepr>(
+            tape: &mut Tape,
+            stack: &mut StackLog,
+            f: F,
+            (src, src_path): (StackIdx, Path),
+        ) -> FixupTapeOffset<isize>
+        where
+            F: Fn(A) -> bool + Copy,
+            [(); A::BYTES]:,
+        {
             let src = stack.get(src);
             let src_repr = src.repr.resolve_path(&src_path);
-            assert_eq!(src_repr, &Repr::Bool, "Condition must have repr bool");
+            assert_eq!(src_repr, &A::repr(), "Condition must have matching repr");
 
             let src = src.offset + src.repr.resolve_path_offset(&src_path);
 
@@ -223,7 +232,7 @@ impl Expr {
                 // This offset will be fixed up later!
                 src =>
                     tape.push_op(symbol, (src, 0), move |(src, rel), tape, regs, stack| unsafe {
-                        if stack.read(src) {
+                        if f(stack.read(src)) {
                             tape.jump_rel(rel);
                         }
                     })
@@ -256,9 +265,12 @@ impl Expr {
             Expr::FieldAccess(x, key) => stack.with_expr(tape, *x, move |tape, stack, x_slot| {
                 copy(tape, stack, x_slot, (output, Path::All));
             })?,
-            Expr::IfElse(cond, a, b) => stack.with_expr(tape, *cond, move |tape, stack, cond_slot| {
+            Expr::IfElse(cond, pred, a, b) => stack.with_expr(tape, *pred, move |tape, stack, pred_slot| {
                 // cond
-                let true_fixup = jump_if(tape, stack, cond_slot);
+                let true_fixup = match cond {
+                    Cond::IsTrue => jump_if(tape, stack, |x: bool| x, pred_slot),
+                    Cond::NotZero => jump_if(tape, stack, |x: u64| x != 0, pred_slot),
+                };
                 let post_cond = tape.next_addr();
 
                 // false
@@ -311,8 +323,11 @@ impl Expr {
                 assert_eq!(b_repr, Repr::U64);
                 Repr::U64
             },
-            Expr::IfElse(cond, a, b) => {
-                assert_eq!(cond.derive_repr(stack), Repr::Bool, "Branch conditional must have a bool repr");
+            Expr::IfElse(cond, pred, a, b) => {
+                match cond {
+                    Cond::IsTrue => assert_eq!(pred.derive_repr(stack), Repr::Bool, "Branch conditional must have a bool repr"),
+                    Cond::NotZero => assert_eq!(pred.derive_repr(stack), Repr::U64, "Branch conditional must have a u64 repr"),
+                }
                 let a_repr = a.derive_repr(stack);
                 let b_repr = b.derive_repr(stack);
                 assert_eq!(a_repr, b_repr, "Reprs of branches must be equivalent");

@@ -86,6 +86,16 @@ pub struct Func {
 }
 
 #[derive(Debug, Clone)]
+pub enum Cond {
+    IsTrue,
+    NotZero,
+}
+
+impl Cond {
+    pub fn if_then_else(self, pred: Expr, a: Expr, b: Expr) -> Expr { Expr::IfElse(self, Box::new(pred), Box::new(a), Box::new(b)) }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Bool(bool),
     U64(u64),
@@ -96,7 +106,7 @@ pub enum Expr {
     Mul(Box<Self>, Box<Self>),
     Then(Box<Self>, Box<Self>),
     Scope(Vec<Self>, Box<Self>),
-    IfElse(Box<Self>, Box<Self>, Box<Self>),
+    IfElse(Cond, Box<Self>, Box<Self>, Box<Self>),
 }
 
 impl Expr {
@@ -111,8 +121,6 @@ impl Expr {
         let body = f((0..inputs.len()).map(Self::Local).collect());
         Self::Scope(inputs, Box::new(body))
     }
-
-    pub fn if_else(self, a: Self, b: Self) -> Self { Self::IfElse(Box::new(self), Box::new(a), Box::new(b)) }
 }
 
 #[derive(Clone, Debug, PartialEq)]

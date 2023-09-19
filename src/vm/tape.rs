@@ -102,12 +102,12 @@ impl Tape {
     }
 
     pub fn push_exit(&mut self) {
+        fn exit<'rt, 'tape, 'stack>(tape: TapePtr<'tape>, state: State<'rt, 'tape, 'stack>, stack: StackPtr<'stack>) {
+            state.rt.save_state(tape, state.regs, stack);
+        }
+
         let pre = self.code.len();
-        self.push(
-            (|tape, state, stack| {
-                state.rt.save_state(tape, state.regs, stack);
-            }) as TapeFn,
-        );
+        self.push(exit as TapeFn);
         self.symbols.push((pre, self.code.len(), "exit".to_string()));
     }
 }

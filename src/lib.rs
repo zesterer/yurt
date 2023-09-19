@@ -5,7 +5,8 @@
     generic_const_exprs,
     inline_const,
     core_intrinsics,
-    int_roundings
+    int_roundings,
+    abi_vectorcall
 )]
 #![allow(incomplete_features, unused_mut, unused_variables)]
 
