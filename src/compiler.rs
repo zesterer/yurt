@@ -24,8 +24,8 @@ struct StackItem {
 // | caller frame | [i32] [i64] ...
 //                ^
 //                | stack pointer
-#[derive(Default)]
-struct StackLog {
+struct StackLog<'a> {
+    module: &'a ModuleBuilder,
     // (offset, _)
     items: Vec<StackItem>,
     // In stack frame
@@ -37,8 +37,17 @@ struct StackLog {
 #[derive(Copy, Clone, PartialEq)]
 struct StackIdx(usize);
 
-impl StackLog {
-    pub fn with_push<F, R>(&mut self, kind: StackItemKind, repr: Repr, f: F) -> R
+impl<'a> StackLog<'a> {
+    fn new(module: &'a ModuleBuilder) -> Self {
+        Self {
+            module,
+            items: Vec::new(),
+            cur_offset: 0,
+            max_offset: 0,
+        }
+    }
+
+    fn with_push<F, R>(&mut self, kind: StackItemKind, repr: Repr, f: F) -> R
     where
         F: FnOnce(&mut Self, StackIdx) -> R,
     {
@@ -77,7 +86,7 @@ impl StackLog {
     pub fn get(&self, idx: StackIdx) -> &StackItem { &self.items[idx.0] }
 
     // Like `with_push`, except the expression is permitted to be derived from some local instead
-    pub fn with_expr<F, R>(&mut self, tape: &mut Tape, expr: Expr, f: F) -> Result<R, String>
+    pub fn with_expr<F, R>(&mut self, tape: &mut Tape, expr: &Expr, f: F) -> Result<R, String>
     where
         F: FnOnce(&mut Tape, &mut Self, (StackIdx, Path)) -> R,
     {
@@ -102,7 +111,7 @@ pub enum Path {
 }
 
 impl Expr {
-    fn compile(self, tape: &mut Tape, stack: &mut StackLog, output: StackIdx) -> Result<(), String> {
+    fn compile(&self, tape: &mut Tape, stack: &mut StackLog, output: StackIdx) -> Result<(), String> {
         fn copy(tape: &mut Tape, stack: &StackLog, (src, src_path): (StackIdx, Path), (dst, dst_path): (StackIdx, Path)) {
             if src == dst {
                 return;
@@ -241,6 +250,31 @@ impl Expr {
             }
         }
 
+        #[must_use]
+        fn jump(tape: &mut Tape, stack: &mut StackLog) -> FixupTapeOffset<isize> {
+            let symbol = format!("jump");
+
+            // This offset will be fixed up later!
+            tape.push_op(symbol, (0,), move |(rel,), tape, state, stack| unsafe {
+                tape.scope(state, stack, |tape, state, stack| {
+                    tape.jump_rel(rel);
+                    let f = tape.read::<TapeFn>();
+                    f(tape, state, stack);
+                })
+
+                state.push_state(tape, regs, stack);
+
+                tape.scope(||
+                tape.jump_rel(rel);
+                let f = tape.read::<TapeFn>();
+                f(tape, state, stack);
+
+                (tape, state.regs, stack) = state.pop_state();
+            })
+            .1
+             .0
+        }
+
         let output_repr = &stack.get(output).repr;
         let self_repr = self.derive_repr(stack);
         assert_eq!(
@@ -249,23 +283,33 @@ impl Expr {
         );
 
         Ok(match self {
-            Expr::Bool(x) => literal_op(tape, stack, x, (output, Path::All)),
-            Expr::U64(x) => literal_op(tape, stack, x, (output, Path::All)),
-            Expr::Local(local) => copy(tape, stack, (stack.get_local(local), Path::All), (output, Path::All)),
-            Expr::Add(a, b) => stack.with_expr(tape, *a, move |tape, stack, a_slot| {
-                stack.with_expr(tape, *b, move |tape, stack, b_slot| {
+            Expr::Bool(x) => literal_op(tape, stack, *x, (output, Path::All)),
+            Expr::U64(x) => literal_op(tape, stack, *x, (output, Path::All)),
+            Expr::Local(local) => copy(tape, stack, (stack.get_local(*local), Path::All), (output, Path::All)),
+            Expr::Add(a, b) => stack.with_expr(tape, a, move |tape, stack, a_slot| {
+                stack.with_expr(tape, b, move |tape, stack, b_slot| {
                     binary_op(tape, stack, <u64 as core::ops::Add<u64>>::add, a_slot, b_slot, (output, Path::All));
                 })
             })??,
-            Expr::Mul(a, b) => stack.with_expr(tape, *a, move |tape, stack, a_slot| {
-                stack.with_expr(tape, *b, move |tape, stack, b_slot| {
+            Expr::Sub(a, b) => stack.with_expr(tape, a, move |tape, stack, a_slot| {
+                stack.with_expr(tape, b, move |tape, stack, b_slot| {
+                    binary_op(tape, stack, <u64 as core::ops::Sub<u64>>::sub, a_slot, b_slot, (output, Path::All));
+                })
+            })??,
+            Expr::Mul(a, b) => stack.with_expr(tape, a, move |tape, stack, a_slot| {
+                stack.with_expr(tape, b, move |tape, stack, b_slot| {
                     binary_op(tape, stack, <u64 as core::ops::Mul<u64>>::mul, a_slot, b_slot, (output, Path::All));
                 })
             })??,
-            Expr::FieldAccess(x, key) => stack.with_expr(tape, *x, move |tape, stack, x_slot| {
+            Expr::Eq(a, b) => stack.with_expr(tape, a, move |tape, stack, a_slot| {
+                stack.with_expr(tape, b, move |tape, stack, b_slot| {
+                    binary_op(tape, stack, |a: u64, b: u64| a == b, a_slot, b_slot, (output, Path::All));
+                })
+            })??,
+            Expr::FieldAccess(x, key) => stack.with_expr(tape, x, move |tape, stack, x_slot| {
                 copy(tape, stack, x_slot, (output, Path::All));
             })?,
-            Expr::IfElse(cond, pred, a, b) => stack.with_expr(tape, *pred, move |tape, stack, pred_slot| {
+            Expr::IfElse(cond, pred, a, b) => stack.with_expr(tape, pred, move |tape, stack, pred_slot| {
                 // cond
                 let true_fixup = match cond {
                     Cond::IsTrue => jump_if(tape, stack, |x: bool| x, pred_slot),
@@ -286,6 +330,18 @@ impl Expr {
                 tape.fixup(end_fixup, post_b.offset_to(end));
                 Ok::<(), String>(())
             })??,
+            Expr::Call(func, arg) => {
+                let func = stack.module.get_func(*func);
+                let arg_repr = arg.derive_repr(stack);
+                stack.with_push(StackItemKind::Temporary, func.output.clone(), |stack, output_slot| {
+                    stack.with_push(StackItemKind::Temporary, func.input.clone(), |stack, input_slot| {
+                        arg.compile(tape, stack, input_slot)?;
+                        todo!();
+                        Ok::<_, String>(())
+                    })?;
+                    Ok::<_, String>(())
+                })?;
+            },
             expr => todo!("{expr:?}"),
         })
     }
@@ -300,7 +356,7 @@ impl Expr {
                 let (x, path) = x.try_as_path(stack)?;
                 Some((x, Path::Field(*key, Box::new(path))))
             },
-            Expr::Add(..) | Expr::Mul(..) => None,
+            Expr::Add(..) | Expr::Mul(..) | Expr::Eq(..) | Expr::Call(..) => None,
             expr => todo!("{expr:?}"),
         }
     }
@@ -316,12 +372,19 @@ impl Expr {
                 } else {
                     panic!("Field access on non-tuple not permitted")
                 },
-            Expr::Add(a, b) | Expr::Mul(a, b) => {
+            Expr::Add(a, b) | Expr::Mul(a, b) | Expr::Sub(a, b) => {
                 let a_repr = a.derive_repr(stack);
                 let b_repr = b.derive_repr(stack);
                 assert_eq!(a_repr, Repr::U64);
                 assert_eq!(b_repr, Repr::U64);
                 Repr::U64
+            },
+            Expr::Eq(a, b) => {
+                let a_repr = a.derive_repr(stack);
+                let b_repr = b.derive_repr(stack);
+                assert_eq!(a_repr, Repr::U64);
+                assert_eq!(b_repr, Repr::U64);
+                Repr::Bool
             },
             Expr::IfElse(cond, pred, a, b) => {
                 match cond {
@@ -332,6 +395,12 @@ impl Expr {
                 let b_repr = b.derive_repr(stack);
                 assert_eq!(a_repr, b_repr, "Reprs of branches must be equivalent");
                 a_repr
+            },
+            Expr::Call(func, arg) => {
+                let arg_repr = arg.derive_repr(stack);
+                let func = stack.module.get_func(*func);
+                assert_eq!(func.input, arg_repr);
+                func.output.clone()
             },
             expr => todo!("{expr:?}"),
         }
@@ -371,17 +440,20 @@ impl Repr {
 }
 
 impl Func {
-    pub fn compile(self, tape: &mut Tape) -> Result<FuncInfo, String> {
+    pub fn compile(&self, module: &ModuleBuilder, tape: &mut Tape) -> Result<FuncInfo, String> {
         let addr = tape.next_addr();
-        StackLog::default().with_push(StackItemKind::Temporary, self.output.clone(), |stack, output| {
+        StackLog::new(module).with_push(StackItemKind::Temporary, self.output.clone(), |stack, output| {
             stack.with_push(StackItemKind::Local(0), self.input.clone(), |stack, _| {
-                self.body.compile(tape, stack, output)
+                self.body
+                    .as_ref()
+                    .expect("function declared but not defined")
+                    .compile(tape, stack, output)
             })
         })?;
         tape.push_exit();
         Ok(FuncInfo {
-            input: self.input,
-            output: self.output,
+            input: self.input.clone(),
+            output: self.output.clone(),
             addr,
         })
     }
@@ -391,7 +463,10 @@ impl ModuleBuilder {
     pub fn compile(self) -> Result<Module, String> {
         let mut tape = Tape::default();
 
-        let funcs = self.funcs.into_iter().map(|func| func.compile(&mut tape)).collect::<Result<_, _>>()?;
+        let funcs = self.funcs
+            .iter()
+            .map(|func| func.compile(&self, &mut tape))
+            .collect::<Result<_, _>>()?;
 
         Ok(Module { tape, funcs })
     }

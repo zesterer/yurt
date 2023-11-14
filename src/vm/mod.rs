@@ -24,11 +24,12 @@ impl<'rt, 'tape, 'stack> State<'rt, 'tape, 'stack> {
 
 #[derive(Default)]
 pub struct Runtime<'tape, 'stack> {
-    pub(crate) last_state: Option<(TapePtr<'tape>, Regs, StackPtr<'stack>)>,
+    pub(crate) prev_states: Vec<(TapePtr<'tape>, Regs, StackPtr<'stack>)>,
 }
 
 impl<'tape, 'stack> Runtime<'tape, 'stack> {
-    fn save_state(&mut self, tape: TapePtr<'tape>, regs: Regs, stack: StackPtr<'stack>) { self.last_state = Some((tape, regs, stack)); }
+    #[inline(always)]
+    fn push_state(&mut self, tape: TapePtr<'tape>, regs: Regs, stack: StackPtr<'stack>) { self.last_state.push((tape, regs, stack)); }
 
-    pub fn last_stack_ptr(&mut self) -> Option<&mut StackPtr<'stack>> { self.last_state.as_mut().map(|(_, _, stack)| stack) }
+    pub fn last_stack_ptr(&mut self) -> Option<&mut StackPtr<'stack>> { self.last_state.last_mut().map(|(_, _, stack)| stack) }
 }

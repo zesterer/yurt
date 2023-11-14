@@ -6,16 +6,19 @@ use yurt::{
 #[test]
 fn procedure() {
     let mut module = Module::build();
-    let add_mul = module.build_func(Repr::Tuple(vec![Repr::U64, Repr::U64, Repr::U64]), Repr::U64, |arg| {
-        Cond::NotZero.if_then_else(
+    let factorial = module.declare_func(Repr::U64, Repr::U64);
+    module.define_func(factorial, |arg| {
+        Cond::IsTrue.if_then_else(
+            arg.clone().eq(Expr::U64(0)),
             Expr::U64(1),
-            arg.clone().field(0).mul(arg.clone().field(1)).add(arg.field(2)),
-            Expr::U64(42),
+            factorial
+                .call(arg.clone().sub(Expr::U64(1)))
+                .mul(arg),
         )
     });
     let module = module.compile().unwrap();
 
     module.show_symbols();
 
-    assert_eq!(module.call::<_, u64>(add_mul, (3u64, 5u64, 1u64)).unwrap(), 16);
+    assert_eq!(module.call::<_, u64>(factorial, 10u64).unwrap(), 16);
 }

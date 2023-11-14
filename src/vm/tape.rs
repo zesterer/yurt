@@ -172,4 +172,11 @@ impl<'tape> TapePtr<'tape> {
         let mut tape = Self(self.0.offset(offset.0 as isize), PhantomData);
         tape.read::<TapeFn>()(tape, state, stack);
     }
+
+    pub fn scope<R, F: FnOnce() -> R>(&mut self, state: State, StackPtr, f: F) -> R
+    where
+        F: for<'rt1, 'tape1, 'stack1> Fn(A, &mut TapePtr<'tape1>, &mut State<'rt1, 'tape1, 'stack1>, &mut StackPtr<'stack1>),
+    {
+
+    }
 }

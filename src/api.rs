@@ -65,24 +65,42 @@ pub struct ModuleBuilder {
 }
 
 impl ModuleBuilder {
-    pub fn build_func<F: FnOnce(Expr) -> Expr>(&mut self, input: Repr, output: Repr, f: F) -> FuncId {
+    pub fn declare_func(&mut self, input: Repr, output: Repr) -> FuncId {
         let id = FuncId(self.funcs.len());
         self.funcs.push(Func {
             input,
             output,
-            body: f(Expr::Local(0)),
+            body: None,
         });
         id
     }
+
+    pub fn define_func<F: FnOnce(Expr) -> Expr>(&mut self, func: FuncId, f: F) {
+        self.funcs[func.0].body = Some(f(Expr::Local(0)));
+    }
+
+    pub fn make_func<F: FnOnce(Expr) -> Expr>(&mut self, input: Repr, output: Repr, f: F) -> FuncId {
+        let func = self.declare_func(input, output);
+        self.define_func(func, f);
+        func
+    }
+
+    pub fn get_func(&self, func: FuncId) -> &Func { &self.funcs[func.0] }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct FuncId(usize);
+
+impl FuncId {
+    pub fn call(self, arg: Expr) -> Expr {
+        Expr::Call(self, Box::new(arg))
+    }
+}
 
 pub struct Func {
     pub(crate) input: Repr,
     pub(crate) output: Repr,
-    pub(crate) body: Expr,
+    pub(crate) body: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,21 +117,27 @@ impl Cond {
 pub enum Expr {
     Bool(bool),
     U64(u64),
+    Tuple(Vec<Self>),
 
     Local(usize),
     FieldAccess(Box<Self>, usize),
     Add(Box<Self>, Box<Self>),
+    Sub(Box<Self>, Box<Self>),
     Mul(Box<Self>, Box<Self>),
+    Eq(Box<Self>, Box<Self>),
     Then(Box<Self>, Box<Self>),
     Scope(Vec<Self>, Box<Self>),
     IfElse(Cond, Box<Self>, Box<Self>, Box<Self>),
+    Call(FuncId, Box<Self>),
 }
 
 impl Expr {
     pub fn field(self, key: usize) -> Self { Self::FieldAccess(Box::new(self), key) }
 
     pub fn add(self, other: Self) -> Self { Self::Add(Box::new(self), Box::new(other)) }
+    pub fn sub(self, other: Self) -> Self { Self::Sub(Box::new(self), Box::new(other)) }
     pub fn mul(self, other: Self) -> Self { Self::Mul(Box::new(self), Box::new(other)) }
+    pub fn eq(self, other: Self) -> Self { Self::Eq(Box::new(self), Box::new(other)) }
 
     pub fn then(self, other: Self) -> Self { Self::Then(Box::new(self), Box::new(other)) }
 
